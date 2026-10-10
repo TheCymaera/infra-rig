@@ -1,0 +1,54 @@
+{
+	"name": "@heledron/infra-rig",
+	"version": "0.1.0",
+	"description": "Utilities for managing infrastructure.",
+	"type": "module",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/TheCymaera/infra-rig"
+	},
+	"keywords": [],
+	"author": "Cymaera",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"default": "./src/index.ts"
+		},
+		"./testing": {
+			"types": "./src/testing/index.ts",
+			"default": "./src/testing/index.ts"
+		}
+	},
+	"files": [
+		"src",
+		"dist"
+	],
+	"publishConfig": {
+		"access": "public",
+		"exports": {
+			".": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			},
+			"./testing": {
+				"types": "./dist/testing/index.d.ts",
+				"default": "./dist/testing/index.js"
+			}
+		}
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+		"build": "pnpm clean && tsc",
+		"prepack": "pnpm build",
+		"prepublishOnly": "node -e \"if (!process.env.npm_config_user_agent?.includes('pnpm/')) { console.error('Publish with pnpm publish: npm and bun ignore publishConfig.exports.'); process.exit(1); }\""
+	},
+	"dependencies": {
+		"yaml": "^2.9.1"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"typescript": "^6.0.3"
+	}
+}

@@ -1,0 +1,27 @@
+{
+	"name": "@heledron/example-svelte-kit",
+	"private": true,
+	"version": "0.0.1",
+	"type": "module",
+	"packageManager": "pnpm@12.9.1",
+	"engines": {
+		"node": ">=24"
+	},
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"typecheck": "svelte-kit sync && tsc --noEmit",
+		"prepare": "svelte-kit sync || echo ''"
+	},
+	"devDependencies": {
+		"@heledron/infra-rig": "link:../../packages/infra-rig",
+		"@sveltejs/adapter-node": "^6.0.0",
+		"@sveltejs/kit": "^3.0.0",
+		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"@types/node": "^24.0.0",
+		"svelte": "^5.57.1",
+		"typescript": "^6.0.3",
+		"vite": "^8.3.0"
+	}
+}

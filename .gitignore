@@ -1,0 +1,21 @@
+# Secrets
+/examples/svelte-kit/infra/.ssh/
+/examples/svelte-kit/infra/.app-production.env
+/examples/bun/infra/.ssh/
+/examples/bun/infra/.app-production.env
+
+# Output
+/examples/svelte-kit/.svelte-kit
+/examples/svelte-kit/build
+/packages/infra-rig/dist
+
+# Node
+node_modules
+
+# OS
+.DS_Store
+
+# Env
+.env
+.env.*
+!.env.example
