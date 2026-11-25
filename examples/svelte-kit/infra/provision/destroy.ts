@@ -1,4 +1,5 @@
-import { digitalOcean, docker, ui } from "@heledron/infra-rig";
+import { digitalOcean, ui } from "@heledron/infra-rig";
+import { fakeVps } from "@heledron/infra-rig/testing";
 import { config } from "../config";
 
 const name = config.target === "digitalOcean" ? config.droplet.name : config.container.name;
@@ -22,5 +23,5 @@ if (config.target === "digitalOcean") {
 		await digitalOcean.droplets.destroy({ id });
 	}
 } else {
-	await docker.container.destroy({ name: config.container.name });
+	await fakeVps.destroy(config.container);
 }

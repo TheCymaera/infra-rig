@@ -1,0 +1,19 @@
+# Development override: `docker compose -f compose.yaml -f compose.dev.yaml up --build`
+#
+# The source tree is bind-mounted into the container and Bun runs with --hot,
+# so saving a file updates the page without rebuilding the image.
+name: bun-example-dev
+
+services:
+  app:
+    build:
+      context: .
+      target: dev
+    image: bun-example:dev
+    container_name: bun-example-dev
+    restart: "no"
+    environment:
+      PORT: 3000
+      NODE_ENV: development
+    volumes:
+      - ./src:/app/src

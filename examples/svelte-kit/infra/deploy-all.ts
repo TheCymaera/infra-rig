@@ -8,7 +8,7 @@ await ui.confirm({
 	phrase: `${config.app.name}-all`
 });
 
-ui.autoConfirm(async () => {
+await ui.autoConfirm(async () => {
 	await run(config.ssh.deploy, sh`mkdir --parents ${config.app.remoteDirectory}`);
 	await import("./deploy-env");
 	await import("./deploy-caddy");

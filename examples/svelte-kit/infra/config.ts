@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import * as fs from "node:fs/promises";
-import { SshTransport, digitalOcean, type DockerConfig } from "@heledron/infra-rig";
-import { fakeVpsDockerfile } from "@heledron/infra-rig/testing";
+import { SshTransport, digitalOcean } from "@heledron/infra-rig";
+import { type FakeVpsOptions } from "@heledron/infra-rig/testing";
 
 const infraDirectory = import.meta.dirname;
 
@@ -27,7 +27,7 @@ function digitalOceanAccess() {
 		reservedIp,
 		droplet: {
 			// doctl compute droplet list --format "ID,Name,PublicIPv4,Region,Size,Image"
-			name: "example-vm",
+			name: "sveltekit-example-vm",
 			region: "sgp1",
 			size: "s-1vcpu-1gb-amd",
 			image: "ubuntu-24-04-x64",
@@ -59,9 +59,7 @@ function dockerAccess() {
 		target: "docker" as const,
 		reservedIp: ip,
 		container: {
-			name: "example-vm",
-			image: "fake-vps:latest",
-			build: { dockerfile: fakeVpsDockerfile },
+			name: "sveltekit-example-vm",
 			publishedPorts: [
 				{ host: deploy.port, container: deploy.port },
 				{ host: bootstrap.port, container: 22 },
@@ -69,7 +67,7 @@ function dockerAccess() {
 				{ host: 3001, container: 80 }
 			],
 			identityFile
-		} satisfies DockerConfig,
+		} satisfies FakeVpsOptions,
 		ssh: {
 			bootstrap,
 			deploy

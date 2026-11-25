@@ -1,4 +1,5 @@
-import { digitalOcean, docker, harden, ui, waitReachable } from "@heledron/infra-rig";
+import { digitalOcean, harden, ui, waitReachable } from "@heledron/infra-rig";
+import { fakeVps } from "@heledron/infra-rig/testing";
 import { config } from "../config";
 
 const { ssh } = config;
@@ -8,17 +9,18 @@ ui.title(`1. Provisioning the server`);
 const fail = (message: string) => { throw new Error(message); }
 
 if (config.target === "docker") {
-	ui.heading("Creating the Docker container");
-	await docker.container.provision(config.container);
+	ui.heading("Creating the fake VPS");
+	await fakeVps.provision(config.container);
 
+	await waitForBootstrap();
 	await hardenServer();
 } else {
 	ui.heading("Creating the DigitalOcean droplet");
 
 	const projectId = await digitalOcean.project.find(config.project) ??
 		fail(`No DigitalOcean project named "${config.project}".`);
-	
-		const firewallId = await digitalOcean.firewall.find(config.firewall) ??
+
+	const firewallId = await digitalOcean.firewall.find(config.firewall) ??
 		fail(`No DigitalOcean firewall named "${config.firewall}".`);
 
 	const dropletId = await digitalOcean.droplets.provision({
@@ -28,6 +30,8 @@ if (config.target === "docker") {
 
 	ui.heading("Assigning the reserved IP");
 	await digitalOcean.droplets.assignReservedIp({ dropletId, reservedIp: config.reservedIp });
+
+	await waitForBootstrap();
 
 	ui.heading("Sending outbound traffic over the reserved IP");
 	await digitalOcean.outboundReservedIp.enable(ssh.bootstrap);
@@ -41,10 +45,11 @@ if (config.target === "docker") {
 	});
 }
 
-ui.heading(`Waiting for SSH as ${ssh.bootstrap.user}@${ssh.bootstrap.host}:${ssh.bootstrap.port}`);
-await waitReachable(ssh.bootstrap);
-
-ui.log(`Bootstrap SSH is now reachable.`);
+async function waitForBootstrap() {
+	ui.heading(`Waiting for SSH as ${ssh.bootstrap.user}@${ssh.bootstrap.host}:${ssh.bootstrap.port}`);
+	await waitReachable(ssh.bootstrap);
+	ui.log(`Bootstrap SSH is now reachable.`);
+}
 
 async function hardenServer() {
 	ui.heading(`Creating ${ssh.deploy.user} and hardening sshd`);

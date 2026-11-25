@@ -1,110 +1,199 @@
-import { mkdir, readFile, stat } from "node:fs/promises";
-import { dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { shell, sh } from "../primitives/shell.js";
-import { ui } from "../primitives/ui.js";
-import { run, capture, tryRun } from "../transports/transport.js";
-import { LocalTransport } from "../transports/local.js";
-import { DockerTransport } from "../transports/docker.js";
+import { files } from "../primitives/files.js";
+import { apt } from "./apt.js";
+import { run, capture, tryRun, type Transport } from "../transports/transport.js";
 
-const local = new LocalTransport();
+export interface DockerInstallOptions {
+	/** Adds this user to the docker group so it can use the daemon without sudo. */
+	user?: string;
+}
 
-export type DockerBuild =
-	| { readonly context: string }
-	| { readonly dockerfile: string };
-
-export interface DockerConfig {
-	name: string;
+export interface DockerImageBuild {
 	image: string;
-	build: DockerBuild;
-	identityFile: string;
-	publishedPorts: { host: number; container: number }[];
+	/** Build context, relative to the transport's working directory. */
+	context: string;
+	dockerfile?: string;
+	/** Target platform, e.g. linux/amd64. Defaults to the builder's platform. */
+	platform?: string;
+	target?: string;
+	buildArgs?: Record<string, string>;
+}
+
+export interface DockerImageSaveGzip {
+	image: string;
+	/** Path of the gzipped archive to write. */
+	outputPath: string;
+}
+
+export interface DockerComposeUpOptions {
+	directory: string;
+	/** Compose files, relative to `directory`. Defaults to compose.yaml. */
+	files?: string[];
+	/** Environment passed to `docker compose`, e.g. APP_IMAGE. */
+	environment?: Record<string, string>;
+	/** Services to act on. Defaults to every service in the project. */
+	services?: string[];
+	/** Recreate containers even when their configuration has not changed. */
+	forceRecreate?: boolean;
+	/** Remove containers for services not defined in the selected files. */
+	removeOrphans?: boolean;
+	/** Wait for services to be running or healthy for up to this many seconds. */
+	waitTimeoutSeconds?: number;
 }
 
 export const docker = {
-	container: {
-		async provision(config: DockerConfig): Promise<void> {
-			if (config.publishedPorts.some((port) => port.host === 22)) {
-				throw new Error("Publishing to host port 22 is not allowed.");
+	installer: {
+		async official(transport: Transport, options: DockerInstallOptions = {}): Promise<void> {
+			const release = await readOsRelease(transport);
+			const repository = dockerRepositories[release.id];
+
+			if (repository === undefined) {
+				throw new Error(
+					`Docker publishes packages for Ubuntu and Debian, not "${release.id}".`
+				);
 			}
-			if (!(await shell.which("docker"))) throw new Error("docker is not on PATH.");
 
-			await ensureImage(config);
+			const keyring = "/etc/apt/keyrings/docker.asc";
+			const list = "/etc/apt/sources.list.d/docker.list";
 
-			const publish = config.publishedPorts
-				.map((port) => `--publish ${port.host}:${port.container}`)
-				.join(" ");
+			await apt.update(transport);
+			await apt.install(transport, ["ca-certificates", "curl"]);
 
 			await run(
-				local,
-				`docker run --detach --name ${shell.quote(config.name)} --privileged --cgroupns=host ${publish} ${shell.quote(config.image)}`
+				transport,
+				[
+					"install --directory --mode 0755 /etc/apt/keyrings",
+					`&& curl --fail --silent --show-error --location ${repository}/gpg --output ${keyring}`,
+					`&& chmod a+r ${keyring}`
+				].join(" "),
+				{ sudo: true }
 			);
 
-			await waitForSystemd(config.name);
-		},
+			const architecture = (await capture(transport, "dpkg --print-architecture")).trim();
+			await files.write(
+				transport,
+				list,
+				`deb [arch=${architecture} signed-by=${keyring}] ${repository} ${release.codename} stable\n`,
+				{ sudo: true }
+			);
 
-		async destroy(spec: { name: string; }): Promise<void> {
-			if (!(await containerExists(spec.name))) {
-				ui.log(`No container named "${spec.name}".`);
-				return;
+			await apt.update(transport);
+			await apt.install(transport, [
+				"docker-ce",
+				"docker-ce-cli",
+				"containerd.io",
+				"docker-buildx-plugin",
+				"docker-compose-plugin"
+			]);
+
+			// enable --now also starts a daemon that was installed but is stopped.
+			await run(transport, "systemctl enable --now docker", { sudo: true });
+
+			if (options.user !== undefined && options.user !== "root") {
+				await run(transport, sh`usermod --append --groups docker ${options.user}`, {
+					sudo: true
+				});
 			}
 
-			await run(local, sh`docker rm --force ${spec.name}`);
+			await waitForDaemon(transport);
+		}
+	},
+
+	image: {
+		async build(transport: Transport, spec: DockerImageBuild): Promise<void> {
+			let command = sh`docker build --tag ${spec.image}`;
+
+			if (spec.dockerfile !== undefined) command += sh` --file ${spec.dockerfile}`;
+			if (spec.platform !== undefined) command += sh` --platform ${spec.platform}`;
+			if (spec.target !== undefined) command += sh` --target ${spec.target}`;
+			for (const [key, value] of Object.entries(spec.buildArgs ?? {})) {
+				command += sh` --build-arg ${`${key}=${value}`}`;
+			}
+
+			command += sh` ${spec.context}`;
+			await run(transport, command);
+		},
+
+		async saveGzip(transport: Transport, spec: DockerImageSaveGzip): Promise<void> {
+			await run(transport, sh`docker save -- ${spec.image} | gzip --stdout > ${spec.outputPath}`);
+		},
+
+		async load(transport: Transport, inputPath: string): Promise<void> {
+			await run(transport, sh`docker load --input ${inputPath}`);
+		}
+	},
+
+	compose: {
+		async up(transport: Transport, spec: DockerComposeUpOptions): Promise<void> {
+			const composeFiles = spec.files ?? ["compose.yaml"];
+			const environment = Object.entries(spec.environment ?? {})
+				.map(([key, value]) => {
+					if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+						throw new Error(`Invalid Compose environment variable name: ${key}`);
+					}
+					return `${key}=${shell.quote(value)}`;
+				})
+				.join(" ");
+
+			const command = [
+				"docker compose",
+				...composeFiles.map((file) => `--file ${shell.quote(file)}`),
+				"up --detach",
+				...(spec.removeOrphans ? ["--remove-orphans"] : []),
+				...(spec.waitTimeoutSeconds === undefined ? [] : [sh`--wait --wait-timeout ${spec.waitTimeoutSeconds}`]),
+				...(spec.forceRecreate ? ["--force-recreate"] : []),
+				"--",
+				...(spec.services ?? []).map((service) => shell.quote(service))
+			].join(" ");
+
+			await run(
+				transport,
+				`cd ${shell.quote(spec.directory)} && ${environment ? `${environment} ` : ""}${command}`
+			);
+		},
+
+		async version(transport: Transport): Promise<string> {
+			const version = (await capture(transport, "docker compose version --short")).trim();
+			return version.replace(/^v/, "");
+		}
+	},
+
+	engine: {
+		async version(transport: Transport): Promise<string> {
+			return (await capture(transport, "docker version --format '{{.Server.Version}}'")).trim();
 		}
 	}
 };
 
-async function containerExists(name: string): Promise<boolean> {
-	const filter = `name=^${name}$`;
-	const result = await capture(local, sh`docker ps --all --quiet --filter ${filter}`);
-	return result.trim().length > 0;
-}
+const dockerRepositories: Readonly<Record<string, string>> = {
+	ubuntu: "https://download.docker.com/linux/ubuntu",
+	debian: "https://download.docker.com/linux/debian"
+};
 
-async function ensureImage(config: DockerConfig): Promise<void> {
-	await ensureSshKey(config.identityFile);
-	const publicKey = (await readFile(`${config.identityFile}.pub`, "utf8")).trim();
-	const buildArgument = `SSH_PUBLIC_KEY=${publicKey}`;
-	const command = sh`docker build --tag ${config.image} --build-arg ${buildArgument}`;
+async function readOsRelease(
+	transport: Transport
+): Promise<{ id: string; codename: string }> {
+	const output = await capture(
+		transport,
+		`. /etc/os-release && printf '%s\\n%s\\n' "$ID" "$VERSION_CODENAME"`
+	);
+	const [id = "", codename = ""] = output.trim().split("\n");
 
-	if ("dockerfile" in config.build) {
-		ui.log(`Building ${config.image} from an inline Dockerfile.`);
-		await run(local, `${command} -`, { stdin: config.build.dockerfile });
-		return;
+	if (id.length === 0 || codename.length === 0) {
+		throw new Error(
+			`${transport.label} does not report both ID and VERSION_CODENAME in /etc/os-release.`
+		);
 	}
 
-	ui.log(`Building ${config.image} from ${config.build.context}.`);
-	await run(local, `${command} ${shell.quote(config.build.context)}`);
+	return { id, codename };
 }
 
-async function ensureSshKey(privateKeyFile: string): Promise<void> {
-	if (await pathExists(privateKeyFile)) return;
-
-	await mkdir(dirname(privateKeyFile), { recursive: true });
-	await run(local, sh`ssh-keygen -t ed25519 -N '' -C 'infra fake-vps' -f ${privateKeyFile}`);
-}
-
-async function pathExists(path: string): Promise<boolean> {
-	try {
-		await stat(path);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-async function waitForSystemd(container: string): Promise<void> {
-	const transport = new DockerTransport({ container });
-
-	for (let attempt = 0; attempt < 60; attempt += 1) {
-		try {
-			const state = (await tryRun(transport, "systemctl is-system-running")).stdout.trim();
-			if (state === "running" || state === "degraded") return;
-		} catch {
-			// The container may not accept exec yet.
-		}
-
+async function waitForDaemon(transport: Transport): Promise<void> {
+	for (let attempt = 0; attempt < 30; attempt += 1) {
+		if ((await tryRun(transport, "docker info", { sudo: true })).exitCode === 0) return;
 		await sleep(1000);
 	}
 
-	throw new Error(`Timed out waiting for systemd inside ${container}.`);
+	throw new Error(`The Docker daemon on ${transport.label} did not become ready.`);
 }

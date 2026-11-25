@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { files, LocalTransport, node, pnpm, rsync, run, systemd, ui } from "@heledron/infra-rig";
+import { capture, files, LocalTransport, node, pnpm, rsync, run, systemd, ui } from "@heledron/infra-rig";
 import { config } from "./config";
 
 const { app, ssh } = config;
@@ -67,4 +67,10 @@ if (!(await systemd.isActive(ssh.deploy, app.name))) {
 	throw new Error(`${app.name} did not start. Check: journalctl --unit ${app.name} --lines 50`);
 }
 
+ui.heading("Checking the app");
+const health = await capture(
+	ssh.deploy,
+	`curl --fail --silent --show-error --retry 10 --retry-delay 1 --retry-connrefused http://localhost:${app.port}/health`
+);
+ui.log(health.trim());
 ui.log(`${app.name} is active on port ${app.port}.`);

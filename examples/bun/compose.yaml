@@ -1,0 +1,22 @@
+name: bun-example
+
+services:
+  app:
+    image: ${APP_IMAGE:-bun-example:latest}
+    container_name: bun-example
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      APP_GREETING: ${APP_GREETING:?APP_GREETING is not set}
+    ports:
+      - "127.0.0.1:${HOST_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - "const response = await fetch('http://127.0.0.1:3000/health'); process.exit(response.ok ? 0 : 1)"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s

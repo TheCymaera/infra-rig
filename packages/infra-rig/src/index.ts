@@ -19,5 +19,4 @@ export { pm2, type Pm2App } from "./recipes/pm2.js";
 export { pnpm } from "./recipes/pnpm.js";
 export { systemd, type SystemdUnit } from "./recipes/systemd.js";
 export { digitalOcean, type DropletConfig } from "./recipes/digitalOcean.js";
-export { docker, type DockerBuild, type DockerConfig } from "./recipes/docker.js";
-
+export { docker, type DockerComposeUpOptions, type DockerImageBuild, type DockerImageSaveGzip, type DockerInstallOptions } from "./recipes/docker.js";
